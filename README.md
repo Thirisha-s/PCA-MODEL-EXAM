@@ -1,7 +1,7 @@
 # PCA-MODEL-EXAM
 
 ## EXP 01
-```[python]
+```
 #include <cuda_runtime.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -280,13 +280,12 @@ int main(int argc, char **argv) {
 #include <cuda.h>
 #include <chrono>
 
-__global__ void bubbleSortKernel(int *d_arr, int n) {
+__global__ void bubbleSortKernel(int *arr, int n) {
     int idx = threadIdx.x + blockIdx.x * blockDim.x;
+    if (blockIdx.x > 0) return;
     for (int i = 0; i < n - 1; i++) {
-        if (idx < n - 1 - i && d_arr[idx] > d_arr[idx + 1]) {
-            int temp = d_arr[idx];
-            d_arr[idx] = d_arr[idx + 1];
-            d_arr[idx + 1] = temp;
+        if (idx < n - 1 - i && arr[idx] > arr[idx + 1]) {
+            int temp = arr[idx]; arr[idx] = arr[idx + 1]; arr[idx + 1] = temp;
         }
         __syncthreads();
     }
@@ -294,110 +293,78 @@ __global__ void bubbleSortKernel(int *d_arr, int n) {
 
 __device__ void merge(int *arr, int left, int mid, int right, int *temp) {
     int i = left, j = mid + 1, k = left;
-    while (i <= mid && j <= right) temp[k++] = arr[i] <= arr[j] ? arr[i++] : arr[j++];
+    while (i <= mid && j <= right) temp[k++] = (arr[i] <= arr[j]) ? arr[i++] : arr[j++];
     while (i <= mid) temp[k++] = arr[i++];
     while (j <= right) temp[k++] = arr[j++];
     for (i = left; i <= right; i++) arr[i] = temp[i];
 }
 
-__global__ void mergeSortKernel(int *d_arr, int *d_temp, int n) {
+__global__ void mergeSortKernel(int *arr, int *temp, int n) {
     int tid = threadIdx.x + blockIdx.x * blockDim.x;
     for (int size = 1; size < n; size *= 2) {
         int left = 2 * size * tid;
         if (left < n) {
-            int mid = min(left + size - 1, n - 1);
-            int right = min(left + 2 * size - 1, n - 1);
-            merge(d_arr, left, mid, right, d_temp);
+            int mid = min(left + size - 1, n - 1), right = min(left + 2 * size - 1, n - 1);
+            merge(arr, left, mid, right, temp);
         }
         __syncthreads();
-        if (tid == 0) {
-            int *temp = d_arr;
-            d_arr = d_temp;
-            d_temp = temp;
-        }
+        if (tid == 0) { int *temp_arr = arr; arr = temp; temp = temp_arr; }
         __syncthreads();
     }
 }
 
 void bubbleSort(int *arr, int n, int blockSize, int numBlocks) {
-    int *d_arr;
-    cudaMalloc(&d_arr, n * sizeof(int));
-    cudaMemcpy(d_arr, arr, n * sizeof(int), cudaMemcpyHostToDevice);
-    cudaEvent_t start, stop; 
-    cudaEventCreate(&start); cudaEventCreate(&stop);
-    cudaEventRecord(start);
-    bubbleSortKernel<<<numBlocks, blockSize>>>(d_arr, n);
-    cudaDeviceSynchronize();
-    cudaEventRecord(stop); cudaEventSynchronize(stop);
-    float milliseconds = 0;
-    cudaEventElapsedTime(&milliseconds, start, stop);
-    cudaMemcpy(arr, d_arr, n * sizeof(int), cudaMemcpyDeviceToHost);
-    cudaFree(d_arr);
-    printf("Bubble Sort (GPU): %f ms\n", milliseconds);
+    int *d_arr; cudaMalloc(&d_arr, n * sizeof(int)); cudaMemcpy(d_arr, arr, n * sizeof(int), cudaMemcpyHostToDevice);
+    cudaEvent_t start, stop; cudaEventCreate(&start); cudaEventCreate(&stop); cudaEventRecord(start);
+    bubbleSortKernel<<<numBlocks, blockSize>>>(d_arr, n); cudaDeviceSynchronize(); cudaEventRecord(stop); cudaEventSynchronize(stop);
+    float ms = 0; cudaEventElapsedTime(&ms, start, stop); cudaMemcpy(arr, d_arr, n * sizeof(int), cudaMemcpyDeviceToHost);
+    cudaFree(d_arr); printf("Bubble Sort (GPU): %f ms\n", ms);
 }
 
 void mergeSort(int *arr, int n, int blockSize, int numBlocks) {
-    int *d_arr, *d_temp;
-    cudaMalloc(&d_arr, n * sizeof(int)); cudaMalloc(&d_temp, n * sizeof(int));
+    int *d_arr, *d_temp; cudaMalloc(&d_arr, n * sizeof(int)); cudaMalloc(&d_temp, n * sizeof(int));
     cudaMemcpy(d_arr, arr, n * sizeof(int), cudaMemcpyHostToDevice);
-    cudaEvent_t start, stop; 
-    cudaEventCreate(&start); cudaEventCreate(&stop);
-    cudaEventRecord(start);
-    mergeSortKernel<<<numBlocks, blockSize>>>(d_arr, d_temp, n);
-    cudaDeviceSynchronize();
-    cudaEventRecord(stop); cudaEventSynchronize(stop);
-    float milliseconds = 0;
-    cudaEventElapsedTime(&milliseconds, start, stop);
-    cudaMemcpy(arr, d_arr, n * sizeof(int), cudaMemcpyDeviceToHost);
-    cudaFree(d_arr); cudaFree(d_temp);
-    printf("Merge Sort (GPU): %f ms\n", milliseconds);
+    cudaEvent_t start, stop; cudaEventCreate(&start); cudaEventCreate(&stop); cudaEventRecord(start);
+    mergeSortKernel<<<numBlocks, blockSize>>>(d_arr, d_temp, n); cudaDeviceSynchronize(); cudaEventRecord(stop); cudaEventSynchronize(stop);
+    float ms = 0; cudaEventElapsedTime(&ms, start, stop); cudaMemcpy(arr, d_arr, n * sizeof(int), cudaMemcpyDeviceToHost);
+    cudaFree(d_arr); cudaFree(d_temp); printf("Merge Sort (GPU): %f ms\n", ms);
 }
 
 void bubbleSortCPU(int *arr, int n) {
     auto start = std::chrono::high_resolution_clock::now();
-    for (int i = 0; i < n - 1; i++) 
-        for (int j = 0; j < n - i - 1; j++) if (arr[j] > arr[j + 1]) std::swap(arr[j], arr[j + 1]);
-    auto end = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double, std::milli> duration = end - start;
-    printf("Bubble Sort (CPU): %f ms\n", duration.count());
+    for (int i = 0; i < n - 1; i++) for (int j = 0; j < n - i - 1; j++) if (arr[j] > arr[j + 1]) { int temp = arr[j]; arr[j] = arr[j + 1]; arr[j + 1] = temp; }
+    auto end = std::chrono::high_resolution_clock::now(); printf("Bubble Sort (CPU): %f ms\n", std::chrono::duration<double, std::milli>(end - start).count());
 }
 
 void mergeSortCPU(int *arr, int n) {
     auto start = std::chrono::high_resolution_clock::now();
-    for (int size = 1; size < n; size *= 2) {
-        for (int left = 0; left + size < n; left += 2 * size) {
-            int mid = left + size - 1, right = min(left + 2 * size - 1, n - 1);
-            merge(arr, left, mid, right, arr + left);  // Merge using host function
-        }
-    }
-    auto end = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double, std::milli> duration = end - start;
-    printf("Merge Sort (CPU): %f ms\n", duration.count());
+    for (int size = 1; size < n; size *= 2) for (int left = 0; left + size < n; left += 2 * size) { int mid = left + size - 1, right = min(left + 2 * size - 1, n - 1); merge(arr, left, mid, right, arr); }
+    auto end = std::chrono::high_resolution_clock::now(); printf("Merge Sort (CPU): %f ms\n", std::chrono::duration<double, std::milli>(end - start).count());
 }
 
 int main() {
-    int n_array[] = {500, 1000};
-    for (int n : n_array) {
+    int n_values[] = {500, 1000}; 
+    int blockSizes[] = {16, 32};
+    for (int n : n_values) {
         int *arr = (int*)malloc(n * sizeof(int));
-        int blockSize_array[] = {16, 32};
-        for (int blockSize : blockSize_array) {
+        for (int blockSize : blockSizes) {
             int numBlocks = (n + blockSize - 1) / blockSize;
-            printf("\nArray Size: %d Block Size: %d Num Blocks: %d\n", n, blockSize, numBlocks);
-
-            // Bubble Sort
+            printf("\nArray Size: %d, Block Size: %d, Num Blocks: %d\n", n, blockSize, numBlocks);
             for (int i = 0; i < n; i++) arr[i] = rand() % 1000;
-            bubbleSortCPU(arr, n);
-            bubbleSort(arr, n, blockSize, numBlocks);
 
-            // Merge Sort
+            bubbleSortCPU(arr, n);
+            for (int i = 0; i < n; i++) arr[i] = rand() % 1000;
+            bubbleSort(arr, n, blockSize, numBlocks);
             for (int i = 0; i < n; i++) arr[i] = rand() % 1000;
             mergeSortCPU(arr, n);
+            for (int i = 0; i < n; i++) arr[i] = rand() % 1000;
             mergeSort(arr, n, blockSize, numBlocks);
         }
         free(arr);
     }
     return 0;
 }
+
 ```
 
 ## EXP 06
